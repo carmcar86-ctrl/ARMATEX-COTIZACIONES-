@@ -1,0 +1,308 @@
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>ARMATEX · Cotizador de Pérgolas (Preview)</title>
+    <!-- Tailwind (CDN for quick preview) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React 18 + Babel (CDN) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  </head>
+  <body class="bg-neutral-50 text-neutral-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useMemo, useState } = React;
+
+      // ====== Parámetros base (MXN) — Ajustables ======
+      const P = {
+        // Lineales (por metro)
+        C_PTR_4X4_M: 986 / 6,
+        C_PTR_4X2_M: 742 / 6,
+        C_R400_M: 603.2 / 6,
+        C_R200_M: 394.4 / 6,
+        C_T_M: 270 / 4,
+        // Superficie (por m²)
+        C_POLI_M2: 1380 / (1.2 * 3.05),
+        C_CRISTAL_M2: 1000,
+        C_LAMINA_M2: 504 / (1.1 * 3.05),
+        C_PVC_M2: 350,
+        C_MALLA_M2: 300,
+        // Tornillería por m²
+        C_TORNILLERIA_M2: 12,
+        // Mano de obra por m² (default)
+        MO_DEF_M2: 364,
+        // Consumos por m²
+        K_PTR_4X4: 0.40,
+        K_PTR_4X2: 0.80,
+        K_R400: 0.40,
+        K_R200: 1.60,
+        K_T: 0.80,
+        // Pintura m² (aprox)
+        COSTO_PINTURA_M2: 1967.75 / 25, // ≈ 78.71
+        // Extras por defecto
+        EXTRAS_DEF: 0,
+        POSTE_SENCILLO_PZ: 0,
+        POSTE_CIMENTADO_PZ: 0,
+        LUZ_BASICA_PUNTO: 0,
+      };
+
+      const MODELOS = [
+        { id: "A", nombre: "Pérgola policarbonato", detalle: "Policarbonato + T" },
+        { id: "B", nombre: "Pérgola cristal 6 mm", detalle: "Cristal 6 mm + T" },
+        { id: "C", nombre: "Pérgola lámina + PVC", detalle: "Lámina + PVC 7 mm" },
+        { id: "D", nombre: "Pérgola lámina", detalle: "Lámina" },
+        { id: "E", nombre: "Pérgola poli + malla", detalle: "Policarbonato + T + Malla" },
+      ];
+
+      const mxn = (n) => (Number.isFinite(+n) ? +n : 0).toLocaleString("es-MX", {
+        style: "currency",
+        currency: "MXN",
+        minimumFractionDigits: 2,
+      });
+
+      function usePricing({ modeloId, includePaint, moM2, utilidadPct }) {
+        const estructuraM2 = React.useMemo(() => {
+          return (
+            P.C_PTR_4X4_M * P.K_PTR_4X4 +
+            P.C_PTR_4X2_M * P.K_PTR_4X2 +
+            P.C_R400_M   * P.K_R400   +
+            P.C_R200_M   * P.K_R200
+          );
+        }, []);
+
+        const cubiertaM2 = React.useMemo(() => {
+          switch (modeloId) {
+            case "A": return P.C_POLI_M2 + P.C_T_M * P.K_T;
+            case "B": return P.C_CRISTAL_M2 + P.C_T_M * P.K_T;
+            case "C": return P.C_LAMINA_M2 + P.C_PVC_M2;
+            case "D": return P.C_LAMINA_M2;
+            case "E": return P.C_POLI_M2 + P.C_T_M * P.K_T + P.C_MALLA_M2;
+            default:  return 0;
+          }
+        }, [modeloId]);
+
+        const materialesM2 = React.useMemo(() => {
+          let base = estructuraM2 + cubiertaM2 + P.C_TORNILLERIA_M2;
+          if (includePaint) base += P.COSTO_PINTURA_M2;
+          return base;
+        }, [estructuraM2, cubiertaM2, includePaint]);
+
+        const costoBaseM2   = materialesM2 + (Number(moM2) || 0);
+        const precioVentaM2 = costoBaseM2 * (1 + (Number(utilidadPct) || 0) / 100);
+
+        return { estructuraM2, cubiertaM2, materialesM2, costoBaseM2, precioVentaM2 };
+      }
+
+      function ArmatexCotizadorPreview() {
+        // Medidas
+        const [ancho, setAncho] = useState(5);
+        const [largo, setLargo] = useState(5);
+        const [modeloId, setModeloId] = useState("A");
+
+        // Económicos
+        const [utilidadPct, setUtilidadPct] = useState(30);
+        const [moM2, setMoM2] = useState(P.MO_DEF_M2);
+        const [includePaint, setIncludePaint] = useState(true);
+
+        // Extra libre
+        const [extraEnabled, setExtraEnabled] = useState(false);
+        const [extraCost, setExtraCost] = useState(P.EXTRAS_DEF);
+
+        // Postes
+        const [postQty, setPostQty] = useState(0);
+        const [postType, setPostType] = useState("Sencillo");
+        const [postUnitSenc, setPostUnitSenc] = useState(P.POSTE_SENCILLO_PZ);
+        const [postUnitCim, setPostUnitCim] = useState(P.POSTE_CIMENTADO_PZ);
+
+        // Luz
+        const [lightEnabled, setLightEnabled] = useState(false);
+        const [lightPoints, setLightPoints] = useState(0);
+        const [lightUnit, setLightUnit] = useState(P.LUZ_BASICA_PUNTO);
+
+        const area = Math.max(0, (Number(ancho) || 0) * (Number(largo) || 0));
+        const { estructuraM2, cubiertaM2, materialesM2, costoBaseM2, precioVentaM2 } =
+          usePricing({ modeloId, includePaint, moM2, utilidadPct });
+
+        // Extras
+        const postUnit   = postType === "Cimentado" ? Number(postUnitCim) : Number(postUnitSenc);
+        const postsCost  = (Number(postQty) || 0) * (postUnit || 0);
+        const electricCost = lightEnabled ? (Number(lightPoints) || 0) * (Number(lightUnit) || 0) : 0;
+        const extraCostTotal = extraEnabled ? (Number(extraCost) || 0) : 0;
+
+        const base = area * (Number(precioVentaM2) || 0);
+        const extras = postsCost + electricCost + extraCostTotal;
+        const total = base + extras;
+
+        return (
+          <div className="min-h-screen p-6">
+            {/* Header */}
+            <div className="max-w-5xl mx-auto">
+              <div className="flex items-center justify-between rounded-2xl bg-[#FF5A00] text-white p-4 shadow">
+                <div className="flex items-center gap-3">
+                  <span>📦</span>
+                  <h1 className="text-xl font-semibold tracking-wide">ARMATEX · Cotizador de Pérgolas</h1>
+                </div>
+                <span className="text-xs opacity-90">Vista previa interactiva</span>
+              </div>
+            </div>
+
+            <div className="max-w-5xl mx-auto grid gap-6 mt-6">
+              {/* Dimensiones & Modelo */}
+              <section className="grid gap-4 rounded-2xl bg-white border border-neutral-200 p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-neutral-700">
+                  <span>📏</span>
+                  <h2 className="font-semibold">Dimensiones y modelo</h2>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="grid gap-1">
+                    <label className="text-sm text-neutral-600">Ancho (m)</label>
+                    <input type="number" step="0.01" value={ancho} onChange={(e)=>setAncho(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-sm text-neutral-600">Largo (m)</label>
+                    <input type="number" step="0.01" value={largo} onChange={(e)=>setLargo(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-sm text-neutral-600">Modelo</label>
+                    <select value={modeloId} onChange={(e)=>setModeloId(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white">
+                      {MODELOS.map((m)=> (
+                        <option key={m.id} value={m.id}>{m.id} — {m.nombre} ({m.detalle})</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="text-sm text-neutral-600">Área: <span className="font-medium text-neutral-800">{area.toFixed(2)} m²</span></div>
+              </section>
+
+              {/* Parámetros económicos */}
+              <section className="grid gap-4 rounded-2xl bg-white border border-neutral-200 p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-neutral-700">
+                  <span>🧮</span>
+                  <h2 className="font-semibold">Parámetros</h2>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="grid gap-1">
+                    <label className="text-sm text-neutral-600">Utilidad (%)</label>
+                    <input type="number" step="0.1" value={utilidadPct} onChange={(e)=>setUtilidadPct(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-sm text-neutral-600">Mano de obra (MXN/m²)</label>
+                    <input type="number" step="0.1" value={moM2} onChange={(e)=>setMoM2(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
+                  </div>
+                  <div className="flex items-center gap-2 pt-6">
+                    <input id="paint" type="checkbox" checked={includePaint} onChange={(e)=>setIncludePaint(e.target.checked)} />
+                    <label htmlFor="paint" className="text-sm">Incluir pintura</label>
+                  </div>
+                </div>
+              </section>
+
+              {/* Extras */}
+              <section className="grid gap-4 rounded-2xl bg-white border border-neutral-200 p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-neutral-700">
+                  <span>➕</span>
+                  <h2 className="font-semibold">Extras</h2>
+                </div>
+
+                {/* Costo extra libre */}
+                <div className="flex flex-col md:flex-row items-center gap-3">
+                  <label className="inline-flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={extraEnabled} onChange={(e)=>setExtraEnabled(e.target.checked)} />
+                    <span>Incluir costo extra</span>
+                  </label>
+                  <div className="grid gap-1 md:grid-cols-[160px_1fr] items-center flex-1">
+                    <span className="text-sm text-neutral-600">Costo extra (MXN)</span>
+                    <input type="number" step="1" value={extraCost} onChange={(e)=>setExtraCost(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white w-full" />
+                  </div>
+                </div>
+
+                {/* Postes */}
+                <div className="grid md:grid-cols-3 gap-3">
+                  <div className="grid gap-1">
+                    <label className="text-sm text-neutral-600">Cantidad de postes (pz)</label>
+                    <input type="number" min="0" step="1" value={postQty} onChange={(e)=>setPostQty(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-sm text-neutral-600">Tipo de poste</label>
+                    <select value={postType} onChange={(e)=>setPostType(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white">
+                      <option>Sencillo</option>
+                      <option>Cimentado</option>
+                    </select>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-sm text-neutral-600">Precio unitario ({postType === "Cimentado" ? "cimentado" : "sencillo"})</label>
+                    {postType === "Cimentado" ? (
+                      <input type="number" step="1" value={postUnitCim} onChange={(e)=>setPostUnitCim(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
+                    ) : (
+                      <input type="number" step="1" value={postUnitSenc} onChange={(e)=>setPostUnitSenc(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
+                    )}
+                  </div>
+                </div>
+
+                {/* Luz básica */}
+                <div className="grid md:grid-cols-3 gap-3">
+                  <div className="flex items-center gap-2">
+                    <input id="light" type="checkbox" checked={lightEnabled} onChange={(e)=>setLightEnabled(e.target.checked)} />
+                    <label htmlFor="light" className="text-sm flex items-center gap-2">💡 Habilitar luz básica</label>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-sm text-neutral-600">Puntos de luz (pz)</label>
+                    <input type="number" min="0" step="1" value={lightPoints} onChange={(e)=>setLightPoints(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-sm text-neutral-600">Costo por punto (MXN)</label>
+                    <input type="number" step="1" value={lightUnit} onChange={(e)=>setLightUnit(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
+                  </div>
+                </div>
+              </section>
+
+              {/* Resumen */}
+              <section className="grid gap-4 rounded-2xl bg-white border border-neutral-200 p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-neutral-700">
+                  <span>💲</span>
+                  <h2 className="font-semibold">Resumen</h2>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div className="grid gap-1">
+                    <div className="flex justify-between"><span>Estructura</span><span>{mxn(estructuraM2)} / m²</span></div>
+                    <div className="flex justify-between"><span>Cubierta</span><span>{mxn(cubiertaM2)} / m²</span></div>
+                    <div className="flex justify-between"><span>Tornillería</span><span>{mxn(P.C_TORNILLERIA_M2)} / m²</span></div>
+                    <div className="flex justify-between"><span>Pintura</span><span>{mxn(includePaint ? P.COSTO_PINTURA_M2 : 0)} / m²</span></div>\n                    <div className="flex justify-between"><span>MO</span><span>{mxn(Number(moM2) || 0)} / m²</span></div>
+                  </div>
+                  <div className="grid gap-1">
+                    <div className="flex justify-between font-medium"><span>Materiales</span><span>{mxn(materialesM2)} / m²</span></div>
+                    <div className="flex justify-between"><span>Costo base</span><span>{mxn(costoBaseM2)} / m²</span></div>
+                    <div className="flex justify-between text-lg font-semibold"><span>Precio venta</span><span>{mxn(precioVentaM2)} / m²</span></div>
+                  </div>
+                </div>
+
+                <div className="border-t pt-3 grid gap-1">
+                  <div className="flex justify-between"><span>Base (área × $/m²)</span><span>{mxn(base)}</span></div>
+                  <div className="flex justify-between"><span>Postes {(postQty || 0)} × {mxn(postUnit || 0)}</span><span>{mxn(postsCost)}</span></div>
+                  <div className="flex justify-between"><span>Luz básica {lightEnabled ? `(${lightPoints || 0} × ${mxn(lightUnit || 0)})` : "(deshabilitada)"}</span><span>{mxn(electricCost)}</span></div>
+                  <div className="flex justify-between"><span>Costo extra {extraEnabled ? "" : "(deshabilitado)"}</span><span>{mxn(extraCostTotal)}</span></div>
+                  <div className="flex justify-between text-lg font-semibold"><span>Extras</span><span>{mxn(extras)}</span></div>
+                  <div className="flex justify-between text-xl font-bold"><span>Total</span><span>{mxn(total)}</span></div>
+                </div>
+                <p className="text-xs text-neutral-500">Consumos por m² (ref 5×5 m): PTR 4×4 0.40, PTR 4×2 0.80, R400 0.40, R200 1.60, T 0.80.</p>
+              </section>
+
+              {/* Footer */}
+              <div className="text-center text-xs text-neutral-500 pb-6">
+                © ${new Date().getFullYear()} ARMATEX · Herramienta de referencia.
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<ArmatexCotizadorPreview />);
+    </script>
+  </body>
+</html>
