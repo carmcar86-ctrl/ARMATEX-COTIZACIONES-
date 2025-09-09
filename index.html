@@ -4,19 +4,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>ARMATEX · Cotizador de Pérgolas (Preview)</title>
-    <!-- Tailwind (CDN for quick preview) -->
+    <title>ARMATEX · Cotizador de Pérgolas (v3b)</title>
+    <!-- Tailwind (CDN) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- React 18 + Babel (CDN) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      @media print {
+        .no-print { display: none !important; }
+        body { background: #fff !important; }
+        .card { box-shadow: none !important; border: 1px solid #e5e7eb; }
+      }
+    </style>
   </head>
   <body class="bg-neutral-50 text-neutral-800">
     <div id="root"></div>
 
     <script type="text/babel">
-      const { useMemo, useState } = React;
+      const { useMemo, useState, useEffect } = React;
 
       // ====== Parámetros base (MXN) — Ajustables ======
       const P = {
@@ -44,6 +51,7 @@
         K_T: 0.80,
         // Pintura m² (aprox)
         COSTO_PINTURA_M2: 1967.75 / 25, // ≈ 78.71
+
         // Extras por defecto
         EXTRAS_DEF: 0,
         POSTE_SENCILLO_PZ: 0,
@@ -53,20 +61,22 @@
 
       const MODELOS = [
         { id: "A", nombre: "Pérgola policarbonato", detalle: "Policarbonato + T" },
-        { id: "B", nombre: "Pérgola cristal 6 mm", detalle: "Cristal 6 mm + T" },
-        { id: "C", nombre: "Pérgola lámina + PVC", detalle: "Lámina + PVC 7 mm" },
-        { id: "D", nombre: "Pérgola lámina", detalle: "Lámina" },
-        { id: "E", nombre: "Pérgola poli + malla", detalle: "Policarbonato + T + Malla" },
+        { id: "B", nombre: "Pérgola cristal 6 mm",  detalle: "Cristal 6 mm + T" },
+        { id: "C", nombre: "Pérgola lámina + PVC",  detalle: "Lámina + PVC 7 mm" },
+        { id: "D", nombre: "Pérgola lámina",        detalle: "Lámina" },
+        { id: "E", nombre: "Pérgola poli + malla",  detalle: "Policarbonato + T + Malla" },
       ];
 
-      const mxn = (n) => (Number.isFinite(+n) ? +n : 0).toLocaleString("es-MX", {
-        style: "currency",
-        currency: "MXN",
-        minimumFractionDigits: 2,
-      });
+      const mxn = (n) =>
+        (Number.isFinite(+n) ? +n : 0).toLocaleString("es-MX", {
+          style: "currency",
+          currency: "MXN",
+          minimumFractionDigits: 2,
+        });
 
-      function usePricing({ modeloId, includePaint, moM2, utilidadPct }) {
-        const estructuraM2 = React.useMemo(() => {
+      function usePricing({ modeloId, includePaint, moM2, utilidadPct, ajusteMatPct }) {
+        // Costo por m² — estructura
+        const estructuraM2 = useMemo(() => {
           return (
             P.C_PTR_4X4_M * P.K_PTR_4X4 +
             P.C_PTR_4X2_M * P.K_PTR_4X2 +
@@ -75,7 +85,8 @@
           );
         }, []);
 
-        const cubiertaM2 = React.useMemo(() => {
+        // Costo por m² — cubierta
+        const cubiertaM2 = useMemo(() => {
           switch (modeloId) {
             case "A": return P.C_POLI_M2 + P.C_T_M * P.K_T;
             case "B": return P.C_CRISTAL_M2 + P.C_T_M * P.K_T;
@@ -86,20 +97,33 @@
           }
         }, [modeloId]);
 
-        const materialesM2 = React.useMemo(() => {
-          let base = estructuraM2 + cubiertaM2 + P.C_TORNILLERIA_M2;
-          if (includePaint) base += P.COSTO_PINTURA_M2;
-          return base;
-        }, [estructuraM2, cubiertaM2, includePaint]);
+        // Ajuste global de materiales % (solo a estructura + cubierta)
+        const multAjuste = 1 + (Number(ajusteMatPct) || 0) / 100;
+        const estructuraAdjM2 = estructuraM2 * multAjuste;
+        const cubiertaAdjM2   = cubiertaM2 * multAjuste;
 
+        // Tornillería y pintura
+        const tornM2 = P.C_TORNILLERIA_M2;
+        const pintM2 = includePaint ? P.COSTO_PINTURA_M2 : 0;
+
+        // Materiales totales por m²
+        const materialesM2 = estructuraAdjM2 + cubiertaAdjM2 + tornM2 + pintM2;
+
+        // Costos base y precio
         const costoBaseM2   = materialesM2 + (Number(moM2) || 0);
         const precioVentaM2 = costoBaseM2 * (1 + (Number(utilidadPct) || 0) / 100);
 
-        return { estructuraM2, cubiertaM2, materialesM2, costoBaseM2, precioVentaM2 };
+        return {
+          estructuraAdjM2, cubiertaAdjM2,
+          tornM2, pintM2,
+          materialesM2, costoBaseM2, precioVentaM2
+        };
       }
 
-      function ArmatexCotizadorPreview() {
-        // Medidas
+      const LS_KEY = "armatex_cotizador_v3b";
+
+      function App() {
+        // Medidas / modelo
         const [ancho, setAncho] = useState(5);
         const [largo, setLargo] = useState(5);
         const [modeloId, setModeloId] = useState("A");
@@ -108,6 +132,11 @@
         const [utilidadPct, setUtilidadPct] = useState(30);
         const [moM2, setMoM2] = useState(P.MO_DEF_M2);
         const [includePaint, setIncludePaint] = useState(true);
+        const [ajusteMatPct, setAjusteMatPct] = useState(0);
+
+        // IVA en cálculo general (visual)
+        const [ivaEnabled, setIvaEnabled] = useState(false);
+        const [ivaPct, setIvaPct] = useState(16);
 
         // Extra libre
         const [extraEnabled, setExtraEnabled] = useState(false);
@@ -124,41 +153,215 @@
         const [lightPoints, setLightPoints] = useState(0);
         const [lightUnit, setLightUnit] = useState(P.LUZ_BASICA_PUNTO);
 
-        const area = Math.max(0, (Number(ancho) || 0) * (Number(largo) || 0));
-        const { estructuraM2, cubiertaM2, materialesM2, costoBaseM2, precioVentaM2 } =
-          usePricing({ modeloId, includePaint, moM2, utilidadPct });
+        // Cliente
+        const [cliente, setCliente] = useState("");
+        const [telefono, setTelefono] = useState("");
+        const [correo, setCorreo] = useState("");
+        const [obra, setObra] = useState("");
+        const [notas, setNotas] = useState("");
+        const [folio, setFolio] = useState("");
+        const [validez, setValidez] = useState("15 días");
 
-        // Extras
-        const postUnit   = postType === "Cimentado" ? Number(postUnitCim) : Number(postUnitSenc);
-        const postsCost  = (Number(postQty) || 0) * (postUnit || 0);
+        // Documento
+        const [docLuzGratis, setDocLuzGratis] = useState(true);
+        const [docPostesGratis, setDocPostesGratis] = useState(true);
+
+        useEffect(() => {
+          try {
+            const saved = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+            Object.entries(saved).forEach(([k, v]) => {
+              const map = {
+                ancho:setAncho, largo:setLargo, modeloId:setModeloId,
+                utilidadPct:setUtilidadPct, moM2:setMoM2, includePaint:setIncludePaint, ajusteMatPct:setAjusteMatPct,
+                ivaEnabled:setIvaEnabled, ivaPct:setIvaPct,
+                extraEnabled:setExtraEnabled, extraCost:setExtraCost,
+                postQty:setPostQty, postType:setPostType, postUnitSenc:setPostUnitSenc, postUnitCim:setPostUnitCim,
+                lightEnabled:setLightEnabled, lightPoints:setLightPoints, lightUnit:setLightUnit,
+                cliente:setCliente, telefono:setTelefono, correo:setCorreo, obra:setObra, notas:setNotas, folio:setFolio, validez:setValidez,
+                docLuzGratis:setDocLuzGratis, docPostesGratis:setDocPostesGratis,
+              };
+              if (map[k] && v !== undefined && v !== null) map[k](v);
+            });
+          } catch {}
+        }, []);
+
+        useEffect(() => {
+          const data = {
+            ancho, largo, modeloId,
+            utilidadPct, moM2, includePaint, ajusteMatPct,
+            ivaEnabled, ivaPct,
+            extraEnabled, extraCost,
+            postQty, postType, postUnitSenc, postUnitCim,
+            lightEnabled, lightPoints, lightUnit,
+            cliente, telefono, correo, obra, notas, folio, validez,
+            docLuzGratis, docPostesGratis,
+          };
+          localStorage.setItem(LS_KEY, JSON.stringify(data));
+        }, [
+          ancho, largo, modeloId,
+          utilidadPct, moM2, includePaint, ajusteMatPct,
+          ivaEnabled, ivaPct,
+          extraEnabled, extraCost,
+          postQty, postType, postUnitSenc, postUnitCim,
+          lightEnabled, lightPoints, lightUnit,
+          cliente, telefono, correo, obra, notas, folio, validez,
+          docLuzGratis, docPostesGratis,
+        ]);
+
+        const area = Math.max(0, (Number(ancho) || 0) * (Number(largo) || 0));
+        const { estructuraAdjM2, cubiertaAdjM2, tornM2, pintM2, materialesM2, costoBaseM2, precioVentaM2 } =
+          usePricing({ modeloId, includePaint, moM2, utilidadPct, ajusteMatPct });
+
+        const postUnit = postType === "Cimentado" ? Number(postUnitCim) : Number(postUnitSenc);
+        const postsCost = (Number(postQty) || 0) * (postUnit || 0);
         const electricCost = lightEnabled ? (Number(lightPoints) || 0) * (Number(lightUnit) || 0) : 0;
         const extraCostTotal = extraEnabled ? (Number(extraCost) || 0) : 0;
 
         const base = area * (Number(precioVentaM2) || 0);
         const extras = postsCost + electricCost + extraCostTotal;
-        const total = base + extras;
+        const subtotal = base + extras;
+        const iva = ivaEnabled ? subtotal * (Number(ivaPct) || 0) / 100 : 0;
+        const total = subtotal + iva;
+
+        // Documento para cliente (siempre IVA 16%)
+        const DOC_IVA_PCT = 16;
+        const docPostsCost = (docPostesGratis ? 0 : postsCost);
+        const docLightCost = (docLuzGratis ? 0 : electricCost);
+        const docExtras = (docPostsCost + docLightCost + extraCostTotal);
+        const docSubtotal = base + docExtras;
+        const docIva = docSubtotal * (DOC_IVA_PCT / 100);
+        const docTotal = docSubtotal + docIva;
+
+        const resetAll = () => {
+          localStorage.removeItem(LS_KEY);
+          location.reload();
+        };
+
+        const now = new Date();
+        const fechaStr = `${String(now.getDate()).padStart(2,"0")}/${String(now.getMonth()+1).padStart(2,"0")}/${now.getFullYear()}`;
 
         return (
-          <div className="min-h-screen p-6">
+          <div className="min-h-screen p-4 sm:p-6">
             {/* Header */}
-            <div className="max-w-5xl mx-auto">
+            <div className="max-w-6xl mx-auto">
               <div className="flex items-center justify-between rounded-2xl bg-[#FF5A00] text-white p-4 shadow">
                 <div className="flex items-center gap-3">
-                  <span>📦</span>
-                  <h1 className="text-xl font-semibold tracking-wide">ARMATEX · Cotizador de Pérgolas</h1>
+                  <span className="text-xl">📦</span>
+                  <h1 className="text-lg sm:text-xl font-semibold tracking-wide">
+                    ARMATEX · Cotizador de Pérgolas <span className="opacity-90 text-xs">(v3b)</span>
+                  </h1>
                 </div>
-                <span className="text-xs opacity-90">Vista previa interactiva</span>
+                <div className="flex gap-2 no-print">
+                  <button onClick={() => window.print()} className="px-3 py-2 rounded-xl bg-white/15 hover:bg-white/20 text-white text-xs">🖨️ Imprimir/PDF</button>
+                  <button onClick={resetAll} className="px-3 py-2 rounded-xl bg-white/15 hover:bg-white/20 text-white text-xs">↺ Reset</button>
+                </div>
               </div>
             </div>
 
-            <div className="max-w-5xl mx-auto grid gap-6 mt-6">
-              {/* Dimensiones & Modelo */}
-              <section className="grid gap-4 rounded-2xl bg-white border border-neutral-200 p-4 shadow-sm">
+            <div className="max-w-6xl mx-auto grid gap-6 mt-6">
+              {/* ===== Documento imprimible para cliente (PRIMERO) ===== */}
+              <section className="card grid gap-4 rounded-2xl bg-white border border-neutral-300 p-6 shadow">
+                {/* Encabezado */}
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-xl font-semibold tracking-wide text-[#FF5A00]">ARMATEX · Cotización</h2>
+                    <p className="text-xs text-neutral-500">Fecha: {fechaStr} &middot; Folio: {folio || "—"}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium">Validez: {validez}</p>
+                    <button onClick={() => window.print()} className="no-print mt-2 px-3 py-2 rounded-xl bg-[#FF5A00] text-white text-xs">🖨️ Imprimir/PDF</button>
+                  </div>
+                </div>
+
+                {/* Datos del cliente (PRIMERO) */}
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div className="grid gap-1">
+                    <label className="text-xs text-neutral-500 no-print">Cliente</label>
+                    <input className="no-print px-3 py-2 rounded-xl border border-neutral-200 bg-white" placeholder="Nombre del cliente" value={cliente} onChange={(e)=>setCliente(e.target.value)}/>
+                    <div className="print:block hidden"><span className="text-neutral-600">Cliente:</span> <span className="font-medium">{cliente || "—"}</span></div>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-xs text-neutral-500 no-print">Teléfono</label>
+                    <input className="no-print px-3 py-2 rounded-xl border border-neutral-200 bg-white" placeholder="55..." value={telefono} onChange={(e)=>setTelefono(e.target.value)}/>
+                    <div className="print:block hidden"><span className="text-neutral-600">Teléfono:</span> <span className="font-medium">{telefono || "—"}</span></div>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-xs text-neutral-500 no-print">Correo</label>
+                    <input className="no-print px-3 py-2 rounded-xl border border-neutral-200 bg-white" placeholder="correo@ejemplo.com" value={correo} onChange={(e)=>setCorreo(e.target.value)}/>
+                    <div className="print:block hidden"><span className="text-neutral-600">Correo:</span> <span className="font-medium">{correo || "—"}</span></div>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-xs text-neutral-500 no-print">Obra / Dirección</label>
+                    <input className="no-print px-3 py-2 rounded-xl border border-neutral-200 bg-white" placeholder="Dirección de la obra" value={obra} onChange={(e)=>setObra(e.target.value)}/>
+                    <div className="print:block hidden"><span className="text-neutral-600">Obra:</span> <span className="font-medium">{obra || "—"}</span></div>
+                  </div>
+                </div>
+
+                {/* Config doc (no-print) */}
+                <div className="no-print grid md:grid-cols-3 gap-3">
+                  <div className="grid gap-1">
+                    <label className="text-xs text-neutral-500">Folio</label>
+                    <input className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" placeholder="ARM-0001" value={folio} onChange={(e)=>setFolio(e.target.value)}/>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-xs text-neutral-500">Validez</label>
+                    <input className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" placeholder="15 días" value={validez} onChange={(e)=>setValidez(e.target.value)}/>
+                  </div>
+                  <div className="grid gap-1">
+                    <label className="text-xs text-neutral-500">Notas</label>
+                    <input className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" placeholder="Tiempo de entrega, condiciones..." value={notas} onChange={(e)=>setNotas(e.target.value)}/>
+                  </div>
+                </div>
+
+                {/* Detalle proyecto (DESPUÉS) */}
+                <div className="rounded-xl border border-neutral-200 p-4 grid gap-2">
+                  <div className="grid md:grid-cols-4 gap-3">
+                    <div><span className="text-neutral-500 text-xs">Modelo</span><div className="font-medium">{MODELOS.find(m=>m.id===modeloId)?.nombre}</div></div>
+                    <div><span className="text-neutral-500 text-xs">Detalle</span><div className="font-medium">{MODELOS.find(m=>m.id===modeloId)?.detalle}</div></div>
+                    <div><span className="text-neutral-500 text-xs">Medidas</span><div className="font-medium">{ancho} × {largo} m</div></div>
+                    <div><span className="text-neutral-500 text-xs">Área</span><div className="font-medium">{area.toFixed(2)} m²</div></div>
+                  </div>
+
+                  <div className="text-sm text-neutral-600 mt-2">Incluye:</div>
+                  <ul className="list-disc pl-6 text-sm text-neutral-800">
+                    <li>Estructura y cubierta según modelo.</li>
+                    {includePaint ? <li>Pintura (fondo + esmalte + thinner).</li> : null}
+                    {lightEnabled ? <li>Instalación de luz básica {docLuzGratis ? <strong>(sin costo)</strong> : null} {lightPoints ? <span>— {lightPoints} puntos</span> : null}</li> : null}
+                    {postQty > 0 ? <li>Postes — {postQty} pz {docPostesGratis ? <strong>(sin costo)</strong> : null}</li> : null}
+                  </ul>
+                </div>
+
+                {/* Totales */}
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="text-sm text-neutral-600">{notas || "Precios en MXN. No incluye obra civil, trámites ni permisos. Sujeto a visita técnica."}</div>
+                  <div className="rounded-xl border border-neutral-200 p-4 grid gap-1">
+                    <div className="flex justify-between"><span>Subtotal</span><span className="font-medium">{mxn(docSubtotal)}</span></div>
+                    <div className="flex justify-between"><span>IVA (16%)</span><span className="font-medium">{mxn(docIva)}</span></div>
+                    <div className="flex justify-between text-lg font-semibold"><span>Total</span><span>{mxn(docTotal)}</span></div>
+                  </div>
+                </div>
+
+                {/* Switches doc */}
+                <div className="no-print grid md:grid-cols-3 gap-3">
+                  <label className="inline-flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={docLuzGratis} onChange={(e)=>setDocLuzGratis(e.target.checked)}/>
+                    <span>Mostrar luz básica como <strong>sin costo</strong></span>
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={docPostesGratis} onChange={(e)=>setDocPostesGratis(e.target.checked)}/>
+                    <span>Mostrar postes como <strong>sin costo</strong></span>
+                  </label>
+                  <div className="text-xs text-neutral-500 flex items-center">El documento siempre calcula IVA al 16%.</div>
+                </div>
+              </section>
+
+              {/* ——— Secciones de configuración (DESPUÉS) ——— */}
+              <section className="card grid gap-4 rounded-2xl bg-white border border-neutral-200 p-4 shadow-sm no-print">
                 <div className="flex items-center gap-2 text-neutral-700">
                   <span>📏</span>
                   <h2 className="font-semibold">Dimensiones y modelo</h2>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <div className="grid gap-1">
                     <label className="text-sm text-neutral-600">Ancho (m)</label>
                     <input type="number" step="0.01" value={ancho} onChange={(e)=>setAncho(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
@@ -167,48 +370,52 @@
                     <label className="text-sm text-neutral-600">Largo (m)</label>
                     <input type="number" step="0.01" value={largo} onChange={(e)=>setLargo(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
                   </div>
-                  <div className="grid gap-1">
+                  <div className="grid gap-1 md:col-span-2">
                     <label className="text-sm text-neutral-600">Modelo</label>
                     <select value={modeloId} onChange={(e)=>setModeloId(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white">
-                      {MODELOS.map((m)=> (
-                        <option key={m.id} value={m.id}>{m.id} — {m.nombre} ({m.detalle})</option>
-                      ))}
+                      {MODELOS.map((m)=> (<option key={m.id} value={m.id}>{m.id} — {m.nombre} ({m.detalle})</option>))}
                     </select>
                   </div>
                 </div>
                 <div className="text-sm text-neutral-600">Área: <span className="font-medium text-neutral-800">{area.toFixed(2)} m²</span></div>
               </section>
 
-              {/* Parámetros económicos */}
-              <section className="grid gap-4 rounded-2xl bg-white border border-neutral-200 p-4 shadow-sm">
+              <section className="card grid gap-4 rounded-2xl bg-white border border-neutral-200 p-4 shadow-sm no-print">
                 <div className="flex items-center gap-2 text-neutral-700">
                   <span>🧮</span>
                   <h2 className="font-semibold">Parámetros</h2>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                   <div className="grid gap-1">
                     <label className="text-sm text-neutral-600">Utilidad (%)</label>
                     <input type="number" step="0.1" value={utilidadPct} onChange={(e)=>setUtilidadPct(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
                   </div>
                   <div className="grid gap-1">
-                    <label className="text-sm text-neutral-600">Mano de obra (MXN/m²)</label>
+                    <label className="text-sm text-neutral-600">MO (MXN/m²)</label>
                     <input type="number" step="0.1" value={moM2} onChange={(e)=>setMoM2(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
                   </div>
-                  <div className="flex items-center gap-2 pt-6">
+                  <div className="grid gap-1">
+                    <label className="text-sm text-neutral-600">Ajuste materiales (%)</label>
+                    <input type="number" step="0.1" value={ajusteMatPct} onChange={(e)=>setAjusteMatPct(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
+                  </div>
+                  <div className="flex items-center gap-2">
                     <input id="paint" type="checkbox" checked={includePaint} onChange={(e)=>setIncludePaint(e.target.checked)} />
                     <label htmlFor="paint" className="text-sm">Incluir pintura</label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input id="iva" type="checkbox" checked={ivaEnabled} onChange={(e)=>setIvaEnabled(e.target.checked)} />
+                    <label htmlFor="iva" className="text-sm">Aplicar IVA</label>
+                    <input type="number" step="0.1" value={ivaPct} onChange={(e)=>setIvaPct(e.target.value)} className="px-2 py-1 rounded-lg border border-neutral-200 bg-white w-20 text-sm" />
+                    <span className="text-sm text-neutral-600">%</span>
                   </div>
                 </div>
               </section>
 
-              {/* Extras */}
-              <section className="grid gap-4 rounded-2xl bg-white border border-neutral-200 p-4 shadow-sm">
+              <section className="card grid gap-4 rounded-2xl bg-white border border-neutral-200 p-4 shadow-sm no-print">
                 <div className="flex items-center gap-2 text-neutral-700">
                   <span>➕</span>
                   <h2 className="font-semibold">Extras</h2>
                 </div>
-
-                {/* Costo extra libre */}
                 <div className="flex flex-col md:flex-row items-center gap-3">
                   <label className="inline-flex items-center gap-2 text-sm">
                     <input type="checkbox" checked={extraEnabled} onChange={(e)=>setExtraEnabled(e.target.checked)} />
@@ -219,8 +426,6 @@
                     <input type="number" step="1" value={extraCost} onChange={(e)=>setExtraCost(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white w-full" />
                   </div>
                 </div>
-
-                {/* Postes */}
                 <div className="grid md:grid-cols-3 gap-3">
                   <div className="grid gap-1">
                     <label className="text-sm text-neutral-600">Cantidad de postes (pz)</label>
@@ -229,21 +434,18 @@
                   <div className="grid gap-1">
                     <label className="text-sm text-neutral-600">Tipo de poste</label>
                     <select value={postType} onChange={(e)=>setPostType(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white">
-                      <option>Sencillo</option>
-                      <option>Cimentado</option>
+                      <option>Sencillo</option><option>Cimentado</option>
                     </select>
                   </div>
                   <div className="grid gap-1">
-                    <label className="text-sm text-neutral-600">Precio unitario ({postType === "Cimentado" ? "cimentado" : "sencillo"})</label>
-                    {postType === "Cimentado" ? (
+                    <label className="text-sm text-neutral-600">Precio unitario ({postType==="Cimentado"?"cimentado":"sencillo"})</label>
+                    {postType==="Cimentado" ? (
                       <input type="number" step="1" value={postUnitCim} onChange={(e)=>setPostUnitCim(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
                     ) : (
                       <input type="number" step="1" value={postUnitSenc} onChange={(e)=>setPostUnitSenc(e.target.value)} className="px-3 py-2 rounded-xl border border-neutral-200 bg-white" />
                     )}
                   </div>
                 </div>
-
-                {/* Luz básica */}
                 <div className="grid md:grid-cols-3 gap-3">
                   <div className="flex items-center gap-2">
                     <input id="light" type="checkbox" checked={lightEnabled} onChange={(e)=>setLightEnabled(e.target.checked)} />
@@ -260,19 +462,18 @@
                 </div>
               </section>
 
-              {/* Resumen */}
-              <section className="grid gap-4 rounded-2xl bg-white border border-neutral-200 p-4 shadow-sm">
+              <section className="card grid gap-4 rounded-2xl bg-white border border-neutral-200 p-4 shadow-sm no-print">
                 <div className="flex items-center gap-2 text-neutral-700">
                   <span>💲</span>
                   <h2 className="font-semibold">Resumen</h2>
                 </div>
-
                 <div className="grid md:grid-cols-2 gap-6">
                   <div className="grid gap-1">
-                    <div className="flex justify-between"><span>Estructura</span><span>{mxn(estructuraM2)} / m²</span></div>
-                    <div className="flex justify-between"><span>Cubierta</span><span>{mxn(cubiertaM2)} / m²</span></div>
-                    <div className="flex justify-between"><span>Tornillería</span><span>{mxn(P.C_TORNILLERIA_M2)} / m²</span></div>
-                    <div className="flex justify-between"><span>Pintura</span><span>{mxn(includePaint ? P.COSTO_PINTURA_M2 : 0)} / m²</span></div>\n                    <div className="flex justify-between"><span>MO</span><span>{mxn(Number(moM2) || 0)} / m²</span></div>
+                    <div className="flex justify-between"><span>Estructura (ajustada)</span><span>{mxn(estructuraAdjM2)} / m²</span></div>
+                    <div className="flex justify-between"><span>Cubierta (ajustada)</span><span>{mxn(cubiertaAdjM2)} / m²</span></div>
+                    <div className="flex justify-between"><span>Tornillería</span><span>{mxn(tornM2)} / m²</span></div>
+                    <div className="flex justify-between"><span>Pintura</span><span>{mxn(pintM2)} / m²</span></div>
+                    <div className="flex justify-between"><span>MO</span><span>{mxn(Number(moM2)||0)} / m²</span></div>
                   </div>
                   <div className="grid gap-1">
                     <div className="flex justify-between font-medium"><span>Materiales</span><span>{mxn(materialesM2)} / m²</span></div>
@@ -280,21 +481,19 @@
                     <div className="flex justify-between text-lg font-semibold"><span>Precio venta</span><span>{mxn(precioVentaM2)} / m²</span></div>
                   </div>
                 </div>
-
                 <div className="border-t pt-3 grid gap-1">
                   <div className="flex justify-between"><span>Base (área × $/m²)</span><span>{mxn(base)}</span></div>
-                  <div className="flex justify-between"><span>Postes {(postQty || 0)} × {mxn(postUnit || 0)}</span><span>{mxn(postsCost)}</span></div>
-                  <div className="flex justify-between"><span>Luz básica {lightEnabled ? `(${lightPoints || 0} × ${mxn(lightUnit || 0)})` : "(deshabilitada)"}</span><span>{mxn(electricCost)}</span></div>
-                  <div className="flex justify-between"><span>Costo extra {extraEnabled ? "" : "(deshabilitado)"}</span><span>{mxn(extraCostTotal)}</span></div>
-                  <div className="flex justify-between text-lg font-semibold"><span>Extras</span><span>{mxn(extras)}</span></div>
+                  <div className="flex justify-between"><span>Postes ({postQty||0} × {mxn(postUnit||0)})</span><span>{mxn(postsCost)}</span></div>
+                  <div className="flex justify-between"><span>Luz básica {lightEnabled?`(${lightPoints||0} × ${mxn(lightUnit||0)})`:"(deshabilitada)"}</span><span>{mxn(electricCost)}</span></div>
+                  <div className="flex justify-between"><span>Costo extra {extraEnabled?"":"(deshabilitado)"}</span><span>{mxn(extraCostTotal)}</span></div>
+                  <div className="flex justify-between text-lg font-semibold"><span>Subtotal</span><span>{mxn(subtotal)}</span></div>
+                  <div className="flex justify-between"><span>IVA {ivaEnabled?`(${Number(ivaPct)||0}%)`:"(deshabilitado)"}</span><span>{mxn(iva)}</span></div>
                   <div className="flex justify-between text-xl font-bold"><span>Total</span><span>{mxn(total)}</span></div>
                 </div>
-                <p className="text-xs text-neutral-500">Consumos por m² (ref 5×5 m): PTR 4×4 0.40, PTR 4×2 0.80, R400 0.40, R200 1.60, T 0.80.</p>
               </section>
 
-              {/* Footer */}
               <div className="text-center text-xs text-neutral-500 pb-6">
-                © ${new Date().getFullYear()} ARMATEX · Herramienta de referencia.
+                © 2025 ARMATEX · Herramienta de referencia.
               </div>
             </div>
           </div>
@@ -302,7 +501,7 @@
       }
 
       const root = ReactDOM.createRoot(document.getElementById('root'));
-      root.render(<ArmatexCotizadorPreview />);
+      root.render(<App />);
     </script>
   </body>
 </html>
